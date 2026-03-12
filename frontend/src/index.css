@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+@theme {
+  --color-emerald-400: #34d399;
+  --color-emerald-500: #10b981;
+  --color-emerald-600: #059669;
+  --color-dark-900: #111827;
+  --color-dark-800: #1f2937;
+  --color-dark-700: #374151;
+}@layer base {
+  body {
+    @apply bg-dark-900 text-gray-100 font-sans antialiased;
+  }
+}
+
+@layer utilities {
+  .glass {
+    @apply bg-dark-800/80 backdrop-blur-md border border-dark-700;
+  }
+}
