@@ -3,13 +3,13 @@ import requests
 from requests.auth import HTTPBasicAuth
 
 def publish_to_wordpress(data: dict, image_path: str = None):
-    vp_url = os.getenv("WP_URL")
+    wp_url = os.getenv("WP_URL")
     wp_user = os.getenv("WP_USERNAME")
     wp_pass = os.getenv("WP_APP_PASSWORD")
     
-    if not vp_url or not wp_user or not wp_pass:
-        print("WARNING: WordPress credentials not found. Simulating publish.")
-        return {"status": "success", "message": "Simulated WordPress publish successfully (Draft).", "wp_url": "mock_url"}
+    if not wp_url or not wp_user or not wp_pass or wp_url == "https://yourwordpresssite.com":
+        print("WARNING: Valid WordPress credentials not found. Simulating publish.")
+        return {"status": "success", "message": "Simulated WordPress publish successfully (Draft). Please configure WP_URL in .env for real publishing.", "wp_url": "mock_url"}
         
     auth = HTTPBasicAuth(wp_user, wp_pass)
     media_id = None
@@ -18,7 +18,7 @@ def publish_to_wordpress(data: dict, image_path: str = None):
     if image_path and os.path.exists(image_path):
         try:
             filename = os.path.basename(image_path)
-            media_endpoint = f"{vp_url}/wp-json/wp/v2/media"
+            media_endpoint = f"{wp_url}/wp-json/wp/v2/media"
             with open(image_path, "rb") as f:
                 media_res = requests.post(
                     media_endpoint, 
@@ -28,11 +28,14 @@ def publish_to_wordpress(data: dict, image_path: str = None):
                 )
             if media_res.status_code in [200, 201]:
                 media_id = media_res.json().get("id")
+                print(f"Successfully uploaded media. ID: {media_id}")
+            else:
+                print(f"Failed to upload media to WordPress. Status: {media_res.status_code}, Response: {media_res.text}")
         except Exception as e:
-            print(f"Failed to upload media to WordPress: {e}")
+            print(f"Exception during media upload: {e}")
 
     # Build the post content
-    endpoint = f"{vp_url}/wp-json/wp/v2/posts"
+    endpoint = f"{wp_url}/wp-json/wp/v2/posts"
     
     # Use the generated content from Gemini, or fallback to mock
     generated_content = data.get("content", "")
@@ -70,5 +73,7 @@ def publish_to_wordpress(data: dict, image_path: str = None):
             return {"status": "success", "message": "Draft created successfully with media", "data": response.json()}
         else:
             return {"status": "error", "message": f"WP API Error: {response.text}"}
+    except requests.exceptions.ConnectionError:
+        return {"status": "success", "message": f"Could not connect to WordPress at {wp_url} (Connection Refused). Simulating publish instead! (Draft)", "wp_url": "mock_url"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
