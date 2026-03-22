@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Check, Edit2, Zap, Share2, RotateCcw } from 'lucide-react';
+import { Check, Edit2, Zap, Share2, RotateCcw, Download, Copy } from 'lucide-react';
 import SocialAssets from './SocialAssets';
 import OmniscientEditor from './OmniscientEditor';
 import KeywordConstellation from './KeywordConstellation';
@@ -12,6 +12,9 @@ const ResultDashboard = ({ results, image, onReset, onPublish }) => {
   const [editingIndex, setEditingIndex] = useState(null);
   const [editValue, setEditValue] = useState("");
   const [contentRef, setContentRef] = useState(results.content);
+  
+  const [copiedTitle, setCopiedTitle] = useState(false);
+  const [copiedMeta, setCopiedMeta] = useState(false);
   
   // Apex Features
   const [distributeTwitter, setDistributeTwitter] = useState(true);
@@ -40,6 +43,40 @@ const ResultDashboard = ({ results, image, onReset, onPublish }) => {
   const radius = 40;
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (score / 100) * circumference;
+
+  const exportReport = () => {
+    const reportContent = `# VisionSEO Analysis Report
+**Topic:** ${results.topic}
+
+## SEO Metadata
+**Title (H1):** ${results.title}
+**Meta Description:** ${results.meta_description}
+
+## Long-Tail Keywords
+${editableKeywords.map(k => `- ${k}`).join('\n')}
+
+## Optimized Content
+${contentRef}
+
+${results.social_snippets ? `## Social Promos
+
+### Twitter/X
+${results.social_snippets.twitter}
+
+### LinkedIn
+${results.social_snippets.linkedin}
+` : ''}`;
+
+    const blob = new Blob([reportContent], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `visionseo-report-${new Date().toISOString().split('T')[0]}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 perspective-1000">
@@ -163,6 +200,13 @@ const ResultDashboard = ({ results, image, onReset, onPublish }) => {
           </button>
           
           <button 
+            onClick={exportReport}
+            className="w-full py-3.5 bg-brand-violet/10 hover:bg-brand-violet/20 text-brand-violet-light hover:text-white rounded-xl font-medium transition-all flex items-center justify-center gap-3 border border-brand-violet/30 hover:border-brand-violet shadow-inner group duration-300 mb-3"
+          >
+            <Download className="w-4 h-4 group-hover:-translate-y-1 transition-transform" /> Download SEO Report (.md)
+          </button>
+
+          <button 
             onClick={onReset}
             disabled={isPublishing}
             className="w-full py-3.5 bg-dark-800/50 hover:bg-dark-700 text-gray-300 hover:text-brand-cyan rounded-xl font-medium transition-all flex items-center justify-center gap-2 border border-white/5 hover:border-brand-cyan/50 shadow-inner group duration-300 disabled:opacity-50"
@@ -189,15 +233,41 @@ const ResultDashboard = ({ results, image, onReset, onPublish }) => {
           
           <div className="space-y-10 relative z-10">
             <div>
-              <label className="text-[11px] text-brand-violet-light font-black uppercase tracking-[0.25em] mb-4 block">Blog Title (H1)</label>
-              <div className="bg-dark-900/40 p-6 rounded-3xl border border-white/5 text-gray-50 text-2xl font-bold shadow-inner backdrop-blur-xl">
+              <div className="flex items-center justify-between mb-4">
+                <label className="text-[11px] text-brand-violet-light font-black uppercase tracking-[0.25em]">Blog Title (H1)</label>
+                <div className="flex items-center gap-4">
+                  <span className={`text-[10px] font-bold ${results.title.length > 60 ? 'text-red-400' : 'text-brand-cyan'}`}>
+                    {results.title.length}/60 chars
+                  </span>
+                  <button 
+                    onClick={() => { navigator.clipboard.writeText(results.title); setCopiedTitle(true); setTimeout(() => setCopiedTitle(false), 2000); }}
+                    className="flex items-center gap-1.5 text-[9px] bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white px-2.5 py-1.5 rounded transition-colors uppercase tracking-wider font-bold"
+                  >
+                    {copiedTitle ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />} {copiedTitle ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+              </div>
+              <div className={`bg-dark-900/40 p-6 rounded-3xl border ${results.title.length > 60 ? 'border-red-500/30 shadow-[0_0_15px_rgba(239,68,68,0.1)]' : 'border-white/5'} text-gray-50 text-2xl font-bold shadow-inner backdrop-blur-xl transition-all duration-300`}>
                 {results.title}
               </div>
             </div>
 
             <div>
-              <label className="text-[11px] text-brand-violet-light font-black uppercase tracking-[0.25em] mb-4 block">Meta Description</label>
-              <div className="bg-dark-900/40 p-6 rounded-3xl border border-white/5 text-gray-300 shadow-inner leading-relaxed font-light text-lg backdrop-blur-xl">
+              <div className="flex items-center justify-between mb-4">
+                <label className="text-[11px] text-brand-violet-light font-black uppercase tracking-[0.25em]">Meta Description</label>
+                <div className="flex items-center gap-4">
+                  <span className={`text-[10px] font-bold ${results.meta_description.length > 160 ? 'text-red-400' : 'text-brand-cyan'}`}>
+                    {results.meta_description.length}/160 chars
+                  </span>
+                  <button 
+                    onClick={() => { navigator.clipboard.writeText(results.meta_description); setCopiedMeta(true); setTimeout(() => setCopiedMeta(false), 2000); }}
+                    className="flex items-center gap-1.5 text-[9px] bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white px-2.5 py-1.5 rounded transition-colors uppercase tracking-wider font-bold"
+                  >
+                    {copiedMeta ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />} {copiedMeta ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+              </div>
+              <div className={`bg-dark-900/40 p-6 rounded-3xl border ${results.meta_description.length > 160 ? 'border-red-500/30 shadow-[0_0_15px_rgba(239,68,68,0.1)]' : 'border-white/5'} text-gray-300 shadow-inner leading-relaxed font-light text-lg backdrop-blur-xl transition-all duration-300`}>
                 {results.meta_description}
               </div>
             </div>
