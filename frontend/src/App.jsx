@@ -45,7 +45,7 @@ function App() {
     formData.append('audience', audience);
 
     try {
-      const response = await axios.post('http://localhost:8000/analyze-image', formData, {
+      const response = await axios.post(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/analyze-image`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         }
@@ -82,7 +82,7 @@ function App() {
         formData.append('file', rawFile);
       }
 
-      const response = await axios.post('http://localhost:8000/publish-wordpress', formData, {
+      const response = await axios.post(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/publish-wordpress`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         }

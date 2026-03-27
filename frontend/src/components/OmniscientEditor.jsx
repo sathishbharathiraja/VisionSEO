@@ -46,7 +46,7 @@ const OmniscientEditor = ({ content, onUpdate, tone, audience }) => {
     
     setIsProcessing(true);
     try {
-      const response = await axios.post('http://localhost:8000/rewrite-text', {
+      const response = await axios.post(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/rewrite-text`, {
         original_text: selectedText,
         action: action,
         tone: tone || "Professional",
