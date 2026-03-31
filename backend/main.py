@@ -11,7 +11,10 @@ app = FastAPI(title="VisionSEO API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # In production, change to the frontend URL
+    allow_origins=[
+        "http://localhost:5173",
+        "https://sathishbharathiraja.github.io"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
