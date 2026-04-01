@@ -95,7 +95,7 @@ const ResultDashboard = ({ results, image, onReset }) => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `vision-aeo-analysis-${new Date().toISOString().split('T')[0]}.md`;
+    a.download = `scopex-aeo-analysis-${new Date().toISOString().split('T')[0]}.md`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -197,7 +197,7 @@ const ResultDashboard = ({ results, image, onReset }) => {
               onClick={exportReport}
               className="w-full py-3 bg-brand-violet/10 hover:bg-brand-violet/20 text-brand-violet-light hover:text-white rounded-xl font-bold transition-all flex items-center justify-center gap-3 border border-brand-violet/30 hover:border-brand-violet shadow-inner group duration-300"
             >
-              <Download className="w-5 h-5 group-hover:-translate-y-1 transition-transform" /> Export Master Report
+              <Download className="w-5 h-5 group-hover:-translate-y-1 transition-transform" /> Export Scopex Journal Report
             </button>
 
             <button 

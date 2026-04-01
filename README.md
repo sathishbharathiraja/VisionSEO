@@ -1,6 +1,10 @@
 # VisionSEO
 
+**Lead Researcher / Author:** Sathish Bharathiraja
+
 VisionSEO is a modern web application that leverages Google's Gemini Vision AI to analyze images and automatically generate SEO-optimized content, including titles, metas, keywords, article content, and social media snippets. It also features one-click publishing directly to WordPress.
+
+> **Note for Academics & Researchers:** See the [Scopex Research Companion (`scopex_readme.md`)](./scopex_readme.md) for the formal architectural and system-level breakdown suited for journal papers.
 
 ## Features
 - **AI Image Analysis:** Uses Gemini 2.5 Flash to analyze uploaded images to generate SEO-optimized text.
