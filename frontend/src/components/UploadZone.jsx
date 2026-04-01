@@ -77,7 +77,7 @@ const UploadZone = ({ onUpload }) => {
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: { 'image/*': [] },
+    accept: { 'image/*': [], 'video/mp4': [], 'video/quicktime': [], 'video/webm': [] },
     multiple: false,
     noClick: mode === 'camera', // Disable click upload when camera is active
     noKeyboard: mode === 'camera'
@@ -114,10 +114,10 @@ const UploadZone = ({ onUpload }) => {
             <UploadCloud className="w-16 h-16 relative z-10" />
           </div>
           <h3 className={`text-4xl font-black mb-4 tracking-tighter transition-colors duration-500 ${isDragActive ? 'text-brand-cyan drop-shadow-[0_0_15px_rgba(6,182,212,0.5)]' : 'text-gray-100 group-hover:text-white'}`}>
-            {isDragActive ? "Initiate Context Scan..." : "Drag & Drop Image"}
+            {isDragActive ? "Initiate Context Scan..." : "Drag & Drop Image or Video"}
           </h3>
           <p className="text-gray-400 text-sm max-w-md mb-12 font-medium tracking-wide leading-relaxed group-hover:text-gray-300 transition-colors">
-            Supports JPG, PNG, WEBP. The Vision Engine will automatically extract semantics and generate SEO metadata.
+            Supports JPG, PNG, WEBP, MP4, MOV. The Vision Engine will automatically extract semantic context and generate SEO metadata.
           </p>
         </>
       ) : (

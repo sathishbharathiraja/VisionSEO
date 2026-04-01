@@ -1,4 +1,5 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 import os
@@ -9,16 +10,29 @@ load_dotenv() # Load environment variables
 
 app = FastAPI(title="VisionSEO API")
 
+# Use universally permissive CORS to prevent ghost errors during quota exhaustion
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "https://sathishbharathiraja.github.io"
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    err_str = str(exc)
+    status_code = 500
+    
+    # Identify Quota errors to provide better UX
+    if "429" in err_str or "quota" in err_str.lower():
+        status_code = 429
+        
+    print(f"GLOBAL ERROR: {err_str}")
+    return JSONResponse(
+        status_code=status_code,
+        content={"status": "error", "message": err_str}
+    )
 
 @app.get("/")
 def read_root():
@@ -26,26 +40,61 @@ def read_root():
 
 import shutil
 import uuid
-from services.ai_service import analyze_image_with_gemini
-from services.wp_service import publish_to_wordpress
+from services.ai_service import analyze_image_fast, analyze_image_deep
 
-@app.post("/analyze-image")
-async def analyze_image(
-    file: UploadFile = File(...),
-    tone: str = Form("Professional"),
-    audience: str = Form("General Public")
+@app.post("/analyze-image-fast")
+async def analyze_image_fast_route(
+    file: UploadFile = File(...)
 ):
-    temp_filename = f"temp_{uuid.uuid4()}_{file.filename}"
+    temp_filename = f"temp_fast_{uuid.uuid4()}_{file.filename}"
     temp_filepath = os.path.join(os.getcwd(), temp_filename)
     
     with open(temp_filepath, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
         
     try:
-        # Analyze using Gemini
-        results = analyze_image_with_gemini(temp_filepath, tone, audience)
+        results = await analyze_image_fast(temp_filepath)
     finally:
-        # Clean up temp file
+        if os.path.exists(temp_filepath):
+            os.remove(temp_filepath)
+            
+    return results
+
+@app.post("/analyze-image-deep")
+async def analyze_image_deep_route(
+    file: UploadFile = File(...)
+):
+    temp_filename = f"temp_deep_{uuid.uuid4()}_{file.filename}"
+    temp_filepath = os.path.join(os.getcwd(), temp_filename)
+    
+    with open(temp_filepath, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+        
+    try:
+        results = await analyze_image_deep(temp_filepath)
+    finally:
+        if os.path.exists(temp_filepath):
+            os.remove(temp_filepath)
+            
+    return results
+
+from services.ai_service import generate_vision_aeo_unified
+
+@app.post("/analyze-image-unified")
+async def analyze_image_unified_route(
+    file: UploadFile = File(...),
+    tone: str = Form("Professional"),
+    audience: str = Form("General Public")
+):
+    temp_filename = f"temp_unified_{uuid.uuid4()}_{file.filename}"
+    temp_filepath = os.path.join(os.getcwd(), temp_filename)
+    
+    with open(temp_filepath, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+        
+    try:
+        results = await generate_vision_aeo_unified(temp_filepath, tone, audience)
+    finally:
         if os.path.exists(temp_filepath):
             os.remove(temp_filepath)
             
@@ -65,7 +114,7 @@ async def rewrite_text(req: RewriteRequest):
     try:
         api_key = os.getenv("GEMINI_API_KEY")
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-2.5-flash')
+        model = genai.GenerativeModel('models/gemini-2.5-flash')
         
         prompt = f"""
         You are a master editor. Rewrite the following text according to the requested action.
@@ -77,11 +126,42 @@ async def rewrite_text(req: RewriteRequest):
         Return ONLY the rewritten text. Do not include quotes, markdown wrapping, or conversational filler. Keep HTML tags if they exist in the original.
         """
         
-        response = model.generate_content(prompt)
+        response = await model.generate_content_async(prompt)
         return {"status": "success", "rewritten_text": response.text.strip()}
     except Exception as e:
         print(f"Rewrite error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+from services.ai_service import generate_seo_from_vision, generate_blog_from_data
+from typing import Optional, Dict, Any
+
+class SEORequest(BaseModel):
+    object_name: Optional[str] = "Unknown Object"
+
+@app.post("/generate-seo-insights")
+async def generate_seo(req: SEORequest):
+    try:
+        results = await generate_seo_from_vision(req.object_name)
+        return results
+    except Exception as e:
+        print(f"SEO Generation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class BlogRequest(BaseModel):
+    vision_data: Optional[Dict[str, Any]] = {}
+    seo_data: Optional[Dict[str, Any]] = {}
+    tone: Optional[str] = "Professional"
+    audience: Optional[str] = "General Public"
+
+@app.post("/generate-blog")
+async def generate_blog(req: BlogRequest):
+    try:
+        results = await generate_blog_from_data(req.vision_data, req.seo_data, req.tone, req.audience)
+        return results
+    except Exception as e:
+        print(f"Blog Generation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 from fastapi import Form
 import json

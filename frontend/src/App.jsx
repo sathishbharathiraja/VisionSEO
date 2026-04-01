@@ -45,14 +45,14 @@ function App() {
     formData.append('audience', audience);
 
     try {
-      const response = await axios.post(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/analyze-image`, formData, {
+      const response = await axios.post(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/analyze-image-unified`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data'
         }
       });
       setResults(response.data);
       
-      // Auto-save to history immediately so drafts are never lost
+      // Save to history with the full unified payload
       saveToHistory({
           ...response.data,
           publishedAt: new Date().toISOString()
@@ -60,8 +60,8 @@ function App() {
       
       setAppState('results');
     } catch (error) {
-      console.error("Error analyzing image:", error);
-      alert("Failed to analyze image. Ensure backend is running.");
+      console.error("Error analyzing media:", error);
+      alert("Failed to analyze media. Ensure backend is running.");
       setAppState('idle');
     }
   };
@@ -180,7 +180,7 @@ function App() {
                     transition={{ duration: 1, delay: 0.8 }}
                     className="text-gray-400 text-lg md:text-xl max-w-2xl mx-auto font-light leading-relaxed text-glow-cyan"
                   >
-                    Upload any image. Our Vision AI extracts semantic context, maps visual objects to high-intent keywords, and generates a ready-to-publish, perfectly formatted WordPress draft.
+                    Upload any image or video. Our Vision AI extracts semantic context, maps visual objects to high-intent keywords, and generates a ready-to-publish, perfectly formatted WordPress draft.
                   </motion.p>
                 </div>
                 <UploadZone onUpload={handleUpload} />
@@ -197,7 +197,11 @@ function App() {
               >
                 <div className="relative w-72 h-72 mb-10 glass rounded-3xl overflow-hidden shadow-[0_0_50px_rgba(6,182,212,0.15)] border-brand-cyan/30 flex items-center justify-center p-2">
                   <div className="absolute inset-0 bg-brand-cyan/5 blur-xl"></div>
-                  {uploadedImage && <img src={uploadedImage} alt="Uploading" className="w-full h-full object-cover rounded-2xl opacity-60 mix-blend-luminosity brightness-75 transition-all duration-1000" />}
+                  {uploadedImage && (
+                    rawFile?.type?.startsWith('video/') ? 
+                    <video src={uploadedImage} autoPlay loop muted playsInline className="w-full h-full object-cover rounded-2xl opacity-60 mix-blend-luminosity brightness-75 transition-all duration-1000" /> :
+                    <img src={uploadedImage} alt="Uploading" className="w-full h-full object-cover rounded-2xl opacity-60 mix-blend-luminosity brightness-75 transition-all duration-1000" />
+                  )}
                   
                   {/* Scanner Grid Overlay */}
                   <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[size:1rem_1rem] [mask-image:radial-gradient(ellipse_60%_60%_at_50%_50%,#000_70%,transparent_100%)]"></div>
@@ -211,10 +215,10 @@ function App() {
                 </div>
                 <h3 className="text-3xl font-extrabold text-white mb-3 flex items-center gap-4 text-glow-cyan">
                   <Search className="animate-spin text-brand-cyan w-8 h-8" /> 
-                  Analyzing Semantic Context...
+                  {rawFile?.type?.startsWith('video/') ? "Processing Video Frames & Audio..." : "Analyzing Semantic Context..."}
                 </h3>
                 <p className="text-brand-cyan-light/70 font-medium text-lg tracking-wide">
-                  Mapping visual concepts to high-volume SEO keywords
+                  {rawFile?.type?.startsWith('video/') ? "This may take 15-30 seconds depending on video length. Do not close tab." : "Mapping visual concepts to high-volume SEO keywords"}
                 </p>
               </motion.div>
             )}
@@ -229,8 +233,10 @@ function App() {
                 <ResultDashboard 
                   results={results} 
                   image={uploadedImage} 
+                  rawFile={rawFile}
                   onReset={() => { setAppState('idle'); setUploadedImage(null); setRawFile(null); }}
                   onPublish={handlePublish}
+                  saveToHistory={saveToHistory}
                 />
               </motion.div>
             )}

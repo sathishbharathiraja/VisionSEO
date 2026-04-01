@@ -5,3 +5,7 @@ python-multipart
 requests
 python-dotenv
 pydantic
+tenacity
+duckduckgo-search
+beautifulsoup4
+lxml

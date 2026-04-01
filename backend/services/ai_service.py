@@ -1,72 +1,263 @@
 import os
 import google.generativeai as genai
 import json
+import base64
+import asyncio
+import mimetypes
+import requests
+from bs4 import BeautifulSoup
+from tenacity import retry, wait_exponential, stop_after_attempt
+from pydantic import BaseModel, Field
 
-def analyze_image_with_gemini(image_path: str, tone: str = "Professional", audience: str = "General Public"):
+PRIMARY_MODEL = 'models/gemini-2.5-pro'
+FALLBACK_MODEL = 'models/gemini-2.5-flash'
+
+# --- RAG UTILITIES ---
+
+async def scrape_competitors(keyword: str) -> tuple[list[str], str]:
+    """Autonomous Agent that searches the live web using DDGS and reads the DOM of top 3 ranking sites."""
+    print(f"[RAG Agent] Querying active internet for: {keyword}")
+    try:
+        from ddgs import DDGS
+        results = await asyncio.to_thread(lambda: list(DDGS().text(keyword, max_results=3)))
+        urls = [r['href'] for r in results] if results else []
+    except Exception as e:
+        print(f"[RAG Agent] Web Search API failure: {e}")
+        return [], ""
+        
+    agg_text = ""
+    valid_urls = []
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+
+    for url in urls:
+        try:
+            print(f"[RAG Agent] Crawling competitor URL: {url}")
+            response = await asyncio.to_thread(requests.get, url, headers=headers, timeout=5)
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, 'html.parser')
+                text_chunks = [p.get_text(strip=True) for p in soup.find_all(['p', 'h1', 'h2', 'h3'])]
+                agg_text += f"\n--- Verified Source: {url} ---\n" + "\n".join(text_chunks)[:2500]
+                valid_urls.append(url)
+        except Exception as e:
+            print(f"[RAG Agent] HTML DOM failure at {url}: {e}")
+
+    return valid_urls, agg_text
+
+# --- PYDANTIC SCHEMAS ---
+
+class FastVisionResult(BaseModel):
+    object: str = Field(description="Specific Object Name in under 6 words")
+
+class DeepVisionResult(BaseModel):
+    context: str = Field(description="Setting, color palette, and vibe")
+    technical_features: list[str] = Field(description="List of 5 technical entities or materials")
+    visual_style: str = Field(description="Core aesthetic signature")
+
+class SEOInsightsResult(BaseModel):
+    top_5_keywords: list[str] = Field(description="Top 5 trending SEO keyword clusters")
+    h1_title: str = Field(description="Highly optimized H1 title")
+    paa_questions: list[str] = Field(description="3 high-intent questions")
+
+class BlogResult(BaseModel):
+    blog_content: str = Field(description="The fully formatted HTML blog post")
+    json_ld: str = Field(description="The raw JSON-LD schema string (Article type)")
+
+class UnifiedResult(BaseModel):
+    object: str
+    context: str
+    visual_style: str
+    technical_features: list[str]
+    seo_insights: SEOInsightsResult
+    blog_content: str
+    json_ld: str
+    competitor_urls: list[str] = Field(description="List of top 3 URLs scanned by the agent")
+    content_gaps: list[str] = Field(description="List of 3 actionable content gaps the competitors missed but the visual provides")
+    ctr_prediction_score: int = Field(description="Visual Click-Through-Rate Potential Score (0-100)")
+    visual_editing_tips: list[str] = Field(description="3 precise visual editing tips to maximize CTR (e.g. increase contrast by 15%)")
+    youtube_shorts_script: str = Field(description="A highly engaging 60-second YouTube Shorts Voiceover Script with Visual cues.")
+    instagram_carousel: list[str] = Field(description="A 5-slide textual roadmap for an Instagram educational carousel.")
+    thumbnail_prompt: str = Field(description="An elite Midjourney v6 generating prompt for a complementary viral thumbnail.")
+
+
+# --- ARCHITECTURAL EXECUTION ENGINE ---
+
+async def execute_with_fallback(prompt_parts, response_schema=None, system_instruction=None):
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise ValueError("GEMINI_API_KEY not found in environment variables.")
-
     genai.configure(api_key=api_key)
+
+    gen_config_kwargs = {}
+    if response_schema:
+        gen_config_kwargs["response_mime_type"] = "application/json"
+        gen_config_kwargs["response_schema"] = response_schema
+        
+    config = genai.types.GenerationConfig(**gen_config_kwargs) if gen_config_kwargs else None
+
+    try:
+        model = genai.GenerativeModel(model_name=PRIMARY_MODEL, system_instruction=system_instruction)
+        response = await model.generate_content_async(prompt_parts, generation_config=config)
+        return response
+    except Exception as e:
+        print(f"WARNING: Primary model ({PRIMARY_MODEL}) failed securely: {e}")
+        print(f"Cascading to highly-available fallback model ({FALLBACK_MODEL})...")
+        
+        @retry(wait=wait_exponential(multiplier=1, min=2, max=10), stop=stop_after_attempt(4))
+        async def _retry_fallback():
+            model_fallback = genai.GenerativeModel(model_name=FALLBACK_MODEL, system_instruction=system_instruction)
+            return await model_fallback.generate_content_async(prompt_parts, generation_config=config)
+            
+        return await _retry_fallback()
+
+
+async def prepare_media(file_path: str):
+    mime_type, _ = mimetypes.guess_type(file_path)
+    mime_type = mime_type or "image/png"
     
-    # We will use gemini-2.5-flash as it is supported and stable
-    model = genai.GenerativeModel('gemini-2.5-flash')
-    
-    prompt = f"""
-    You are an expert SEO specialist, content writer, and highly proficient in interpreting images.
-    Analyze the provided image and generate a comprehensive SEO-optimized blog package.
-    
-    The target tone for this content is: {tone}.
-    The target audience is: {audience}.
-    
-    Respond strictly with a JSON object that perfectly matches the following structured schema.
-    CRITICAL INSTRUCTION: Ensure the JSON is valid and parsable. Do not include markdown code blocks around the JSON string.
-    CRITICAL INSTRUCTION: When writing HTML in the "content" field, you MUST use single quotes for HTML attributes (e.g., <h2 class='title'>) to avoid breaking the JSON format with unescaped double quotes. Any required double quotes within the text MUST be properly escaped as \\\". 
-    
-    SCHEMA:
-    {{
-        "topic": "A 2-4 word primary topic based on the image.",
-        "title": "A catchy, SEO-friendly H1 title (under 60 characters) written in a {tone} tone for {audience}.",
-        "meta_description": "A compelling meta description (150-160 characters) summarizing the post and encouraging clicks.",
-        "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"],
-        "content": "A full 500-1000 word blog article formatted in pure HTML. Include <h2> and <h3> tags for structure, write in paragraphs, and emphasize important concepts. The content must heavily rely on the visual context, be written in a {tone} voice, and be specifically tailored for {audience}.",
-        "social_snippets": {{
-            "twitter": "A short, engaging tweet (under 280 characters) promoting the article with 3 relevant hashtags.",
-            "linkedin": "A professional and engaging thought-leadership post for LinkedIn introducing the article, ending with a call to action and 3-5 hashtags."
-        }},
-        "visual_hooks": [
-            "A bold, contrarian, or highly engaging 3-6 word text overlay for a social media graphic.",
-            "An emotional or curiosity-driven 3-6 word text overlay.",
-            "A data-driven or authoritative 3-6 word text overlay."
-        ]
-    }}
-    """
+    if mime_type.startswith("video/"):
+        print(f"[Media Engine] Uploading Video to Gemini File API: {file_path}")
+        uploaded_file = genai.upload_file(path=file_path, mime_type=mime_type)
+        print(f"[Media Engine] File uploaded. Current state: {uploaded_file.state.name}")
+        
+        while uploaded_file.state.name == "PROCESSING":
+            print("[Media Engine] System waiting for Video Context Mapping...", flush=True)
+            await asyncio.sleep(2.5)
+            uploaded_file = genai.get_file(uploaded_file.name)
+            
+        if uploaded_file.state.name == "FAILED":
+            raise ValueError("Video processing failed internally structurally on Google Media API.")
+            
+        print("[Media Engine] Video Processing Complete! Ready for Inference.")
+        return uploaded_file
+        
+    else:
+        with open(file_path, "rb") as f:
+            img_data = f.read()
+        return {
+            "mime_type": mime_type,
+            "data": base64.b64encode(img_data).decode("utf-8")
+        }
+
+
+def cleanup_media(media_part):
+    if hasattr(media_part, 'name'):
+        try:
+            genai.delete_file(media_part.name)
+            print(f"[Media Engine] Purged remote File API asset from Google Cloud: {media_part.name}")
+        except Exception as e:
+            print(f"[Media Engine] Failed to purge remote file: {e}")
+
+
+# --- ASYNC SERVICE ENDPOINTS ---
+
+async def analyze_image_fast(file_path: str) -> dict:
+    prompt = "Examine this media and identify the SINGLE primary focal point, object, or subject. If video, identify the core subject of the action. Output exactly what it is in under 6 words."
+    media_part = await prepare_media(file_path)
     
     try:
-        sample_file = genai.upload_file(path=image_path)
+        response = await execute_with_fallback([prompt, media_part], response_schema=FastVisionResult)
+        return json.loads(response.text)
+    except Exception as e:
+        print(f"Fast Vision Exception: {e}")
+        return {"object": "Unidentified Object"}
+    finally:
+        cleanup_media(media_part)
+
+
+async def analyze_image_deep(file_path: str, tone: str = "Professional", audience: str = "General Public") -> dict:
+    prompt = "Analyze this media in deep detail. Describe setting/vibe/action. List 5 specific technical features. Output visual style."
+    media_part = await prepare_media(file_path)
+    
+    try:
+        response = await execute_with_fallback([prompt, media_part], response_schema=DeepVisionResult)
+        return json.loads(response.text)
+    except Exception as e:
+        print(f"Deep Vision Exception: {e}")
+        return {"context": f"Failed: {str(e)}", "technical_features": [], "visual_style": "Failed"}
+    finally:
+        cleanup_media(media_part)
+
+
+async def generate_seo_from_vision(object_name: str) -> dict:
+    prompt = f"""
+    Act as an elite SEO Analyst and Ahrefs/Semrush terminal proxy.
+    I have extracted the exact identity of a primary target object/action from a media asset: [{object_name}].
+    Task: Search your real-world parameter database for the absolute best trending SEO keyword clusters and user intent metrics.
+    """
+    try:
+        response = await execute_with_fallback(prompt, response_schema=SEOInsightsResult)
+        return json.loads(response.text)
+    except Exception as e:
+        print(f"SEO Generation Exception: {e}")
+        return {"top_5_keywords": [], "h1_title": "Error generating insights", "paa_questions": []}
+
+
+async def generate_blog_from_data(vision_data: dict, seo_data: dict, tone: str, audience: str) -> dict:
+    system_instruction = "You are an expert Content Strategist specializing in AEO (Answer Engine Optimization). Write easily indexable blog posts using correct HTML markup."
+    prompt = f"""
+    Write a comprehensive blog post based on this verified data.
+    Media Context: {json.dumps(vision_data)}
+    SEO Research: {json.dumps(seo_data)}
+    Tone: {tone}
+    Target Audience: {audience}
+
+    Requirements: Semantic Triplets. Structured Headers (H2/H3). Internal Linking Placeholders. Expertise Pro-Tip. 
+    Context Gate: Verify SEO keywords semantically align with Media Context. IGNORE SEO if completely irrelevant.
+    """
+    try:
+        response = await execute_with_fallback([prompt], response_schema=BlogResult, system_instruction=system_instruction)
+        return json.loads(response.text)
+    except Exception as e:
+        print(f"Blog Generation Exception: {e}")
+        return {"blog_content": f"<p>Error: {str(e)}</p>", "json_ld": "{}"}
+
+
+async def generate_vision_aeo_unified(file_path: str, tone: str = "Professional", audience: str = "General Public") -> dict:
+    system_instruction = "You are an Enterprise-Grade AEO Strategy Engine. Your task is to analyze media against real-world scraped data and generate a complete, high-performance SEO and Content package natively structured as JSON."
+    
+    media_part = await prepare_media(file_path)
+    
+    try:
+        # STEP 1: Fast Identify for RAG Search Query
+        print("[RAG Agent] Initializing visual vector analysis for search...")
+        fast_prompt = "Identify the single primary object or subject in this media. Output a clean 2-4 word search query (e.g. 'Logitech MX Master 3' or 'Beachfront Modern Villa'). Output exactly what it is."
+        fast_result = await execute_with_fallback([fast_prompt, media_part], response_schema=FastVisionResult)
+        target_keyword = json.loads(fast_result.text).get("object", "technology")
+        print(f"[RAG Agent] Target vector identified: {target_keyword}")
         
-        response = model.generate_content(
-            [prompt, sample_file],
-            generation_config=genai.types.GenerationConfig(
-                response_mime_type="application/json",
-            )
-        )
+        # STEP 2: Agentic Web Scrape
+        competitor_urls, competitor_text = await scrape_competitors(target_keyword)
+
+        # STEP 3: Unified Synthesis
+        prompt = f"""
+        Perform a full Omnichannel AEO (Answer Engine Optimization) & Viral Synthesis critically analyzing the visual input differentially against live Competitor Data. 
+        Tone: {tone}, Audience: {audience}.
         
-        # Find the first { and last } to extract just the JSON object
-        json_str = response.text
-        start_idx = json_str.find("{")
-        end_idx = json_str.rfind("}")
+        1. Vision Identification: Identify core object/action, list 5 tech features, describe style. Provide video context if video.
+        2. SEO Strategy: Generate keywords, H1, and 'People Also Ask' questions. 
+        3. Competitor Intelligence (RAG): Differentially analyze the visual input against the provided Competitor Web Data. Identify 3 critical 'Content Gaps' that the competitors missed, but the specific visual input visibly highlights.
+        4. Viral Optimizer: Predict the CTR (Click-Through-Rate) Potential Score (0-100) of this media based on mathematical visual heuristics (lighting, composition, contrast). Provide 3 exact visual editing tips to mathematically increase this score.
+        5. Omnichannel Factory: Concurrently generate:
+           - A captivating 60-second YouTube Shorts script (include visual cues and VO).
+           - A 5-slide educational Instagram Carousel based on the SEO and visual concepts.
+           - An elite, highly-technical Midjourney v6 generative AI prompt to create a perfect high-CTR viral thumbnail art.
+        6. Blog Generation: 500-word blog post. Use HTML tags for formatting. Integrate visual observations with RAG gaps. 'Pro-Tip'. JSON-LD schema (Article or VideoObject based on media).
         
-        if start_idx != -1 and end_idx != -1:
-            json_str = json_str[start_idx:end_idx+1]
-            
-        return json.loads(json_str)
+        COMPETITOR WEB DATA TO ANALYZE AGAINST:
+        ```
+        {competitor_text if competitor_text else "No competitor data available. Proceed without gap analysis."}
+        ```
+        """
+        response = await execute_with_fallback([prompt, media_part], response_schema=UnifiedResult, system_instruction=system_instruction)
+        final_dict = json.loads(response.text)
+        
+        # Force inject reliable array of scanned links even if model tries to hallucinate them
+        final_dict["competitor_urls"] = competitor_urls
+        
+        return final_dict
         
     except Exception as e:
-        print(f"Error in Gemini Vision Service: {e}")
-        return {
-            "topic": "Error Processing Image",
-            "title": "Error Processing Image",
-            "meta_description": str(e),
-            "keywords": []
-        }
+        print(f"Unified Pipeline Exception: {e}")
+        raise e
+    finally:
+        cleanup_media(media_part)
