@@ -1,255 +1,393 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 import UploadZone from './components/UploadZone';
 import ResultDashboard from './components/ResultDashboard';
 import HistoryTab from './components/HistoryTab';
-import { Camera, Search, FileText, CheckCircle } from 'lucide-react';
+import ProgressStepper from './components/ProgressStepper';
+import { ToastProvider, useToast } from './components/ToastProvider';
+import GlobalDropZone from './components/GlobalDropZone';
+import OnboardingModal from './components/OnboardingModal';
+import KeyboardShortcutsModal from './components/KeyboardShortcutsModal';
+import StatsBar from './components/StatsBar';
+import { Camera, History, LayoutDashboard, Plus, Keyboard } from 'lucide-react';
 
-function App() {
-  const [activeTab, setActiveTab] = useState('upload'); // 'upload' or 'history'
-  const [appState, setAppState] = useState('idle'); // 'idle', 'scanning', 'results'
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+// ─── Inner App (needs ToastProvider in tree) ──────────────────────────────────
+function AppInner() {
+  const toast = useToast();
+
+  const [activeTab, setActiveTab] = useState('upload');
+  const [appState, setAppState] = useState('idle'); // 'idle' | 'scanning' | 'results'
   const [results, setResults] = useState(null);
   const [history, setHistory] = useState(() => {
     try {
-      const saved = localStorage.getItem('visionseo_history');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
+      return JSON.parse(localStorage.getItem('visionseo_history') || '[]');
+    } catch { return []; }
   });
   const [uploadedImage, setUploadedImage] = useState(null);
   const [rawFile, setRawFile] = useState(null);
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
-  useEffect(() => {
-    const updateMousePosition = (e) => {
-      setMousePosition({ x: e.clientX, y: e.clientY });
-    };
-    window.addEventListener('mousemove', updateMousePosition);
-    return () => window.removeEventListener('mousemove', updateMousePosition);
-  }, []);
+  // Last failed upload — stored so retry works
+  const lastUploadRef = useRef(null);
 
+  // ── Persist history ──────────────────────────────────────────────────────
   useEffect(() => {
     localStorage.setItem('visionseo_history', JSON.stringify(history));
   }, [history]);
 
-  const handleUpload = async (file, tone, audience) => {
+  // ── Mouse glow ───────────────────────────────────────────────────────────
+  useEffect(() => {
+    const update = (e) => setMousePosition({ x: e.clientX, y: e.clientY });
+    window.addEventListener('mousemove', update);
+    return () => window.removeEventListener('mousemove', update);
+  }, []);
+
+  // ── Keyboard shortcuts ────────────────────────────────────────────────────
+  useEffect(() => {
+    const handler = (e) => {
+      // Escape: back to idle from results, or close modals
+      if (e.key === 'Escape') {
+        if (shortcutsOpen) { setShortcutsOpen(false); return; }
+        if (appState === 'results') { handleReset(); return; }
+      }
+      // Alt+1 / Alt+2 — tab switching
+      if (e.altKey && e.key === '1') { setActiveTab('upload'); }
+      if (e.altKey && e.key === '2') { setActiveTab('history'); }
+      // Ctrl+R — new scan (only when on results)
+      if (e.ctrlKey && e.key === 'r' && appState === 'results') {
+        e.preventDefault();
+        handleReset();
+      }
+      // ? or Ctrl+/ — open shortcuts modal
+      if ((e.key === '?' && !e.ctrlKey) || (e.ctrlKey && e.key === '/')) {
+        e.preventDefault();
+        setShortcutsOpen((o) => !o);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [appState, shortcutsOpen]);
+
+  const saveToHistory = (data) => setHistory((prev) => [data, ...prev]);
+
+  // ── Core upload handler ───────────────────────────────────────────────────
+  const handleUpload = useCallback(async (file, tone, audience) => {
+    lastUploadRef.current = { file, tone, audience };
     setAppState('scanning');
     setUploadedImage(URL.createObjectURL(file));
     setRawFile(file);
 
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('tone', tone);
-    formData.append('audience', audience);
+    formData.append('tone', tone || 'Professional');
+    formData.append('audience', audience || 'General Public');
 
     try {
-      const response = await axios.post(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/analyze-image-unified`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
+      const response = await axios.post(`${API_BASE}/analyze-image-unified`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
       });
       setResults(response.data);
-      
-      // Save to history with the full unified payload
-      saveToHistory({
-          ...response.data,
-          publishedAt: new Date().toISOString()
-      });
-      
+      saveToHistory({ ...response.data, publishedAt: new Date().toISOString() });
       setAppState('results');
+      toast.success('Analysis complete! Your AEO content package is ready.', { title: '✅ Vision AI Complete' });
     } catch (error) {
-      console.error("Error analyzing media:", error);
-      alert("Failed to analyze media. Ensure backend is running.");
+      console.error('Error analyzing media:', error);
+      const isQuota = error?.response?.status === 429;
+      const msg = isQuota
+        ? 'API quota exceeded. Please wait a moment and try again.'
+        : 'Analysis failed. Make sure the backend is running.';
+
+      // Show error toast with Retry action
+      toast.error(msg, {
+        title: isQuota ? '⚡ Quota Limit' : '❌ Analysis Failed',
+        duration: 10000,
+        action: {
+          label: 'Retry →',
+          onClick: () => {
+            if (lastUploadRef.current) {
+              const { file: f, tone: t, audience: a } = lastUploadRef.current;
+              handleUpload(f, t, a);
+            }
+          },
+        },
+      });
       setAppState('idle');
     }
-  };
+  }, [toast]);
 
-  const saveToHistory = (data) => {
-    setHistory(prev => [data, ...prev]);
-  };
+  // ── Global drop / paste handler (from GlobalDropZone) ────────────────────
+  const handleGlobalFile = useCallback((file) => {
+    const savedTone = localStorage.getItem('visionseo_tone') || 'Professional';
+    const savedAudience = localStorage.getItem('visionseo_audience') || 'General Public';
+    // Switch to upload tab if needed
+    setActiveTab('upload');
+    // Go straight to preview via a synthetic file drop — UploadZone handles this
+    // by triggering onUpload. We dispatch a custom event that UploadZone listens to.
+    window.dispatchEvent(new CustomEvent('visionseo:global-file', { detail: { file, tone: savedTone, audience: savedAudience } }));
+  }, []);
 
+  // ── Publish ───────────────────────────────────────────────────────────────
   const handlePublish = async (finalData) => {
     try {
       const formData = new FormData();
       formData.append('data', JSON.stringify(finalData));
-      
-      // Grab the original file if we can. The object URL isn't sendable.
-      // Easiest is to accept the File object from the Dashboard component, or store it in state.
-      // Let's assume we store the raw File in state to re-upload it.
-      if (rawFile) {
-        formData.append('file', rawFile);
-      }
-
-      const response = await axios.post(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/publish-wordpress`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
+      if (rawFile) formData.append('file', rawFile);
+      const response = await axios.post(`${API_BASE}/publish-wordpress`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
       });
-      if (response.data.status === "success" || response.data.status === "mock") {
+      if (response.data.status === 'success' || response.data.status === 'mock') {
         saveToHistory(finalData);
-        alert(response.data.message || "Published to WordPress! (Draft)");
+        toast.success(response.data.message || 'Draft created in WordPress!', { title: '🚀 Published!' });
       } else {
-        alert("Publish failed: " + response.data.message);
+        toast.error(response.data.message, { title: 'Publish Failed' });
       }
     } catch (error) {
-      console.error("Publish error", error);
-      alert("Failed to publish to WordPress. Check console.");
+      console.error('Publish error', error);
+      toast.error('Failed to publish. Check your WordPress credentials in the backend .env.', { title: '❌ Publish Error' });
     }
   };
 
-  return (
-    <div className="min-h-screen flex flex-col items-center p-6 md:p-12 relative overflow-hidden bg-grid">
-      {/* Global Mouse Glow */}
-      <motion.div 
-        className="fixed top-0 left-0 w-[800px] h-[800px] rounded-full pointer-events-none z-0 mix-blend-screen"
-        animate={{
-          x: mousePosition.x - 400,
-          y: mousePosition.y - 400,
-        }}
-        transition={{ type: "tween", ease: "backOut", duration: 0.8 }}
-        style={{
-          background: 'radial-gradient(circle, rgba(139,92,246,0.08) 0%, rgba(6,182,212,0.03) 30%, transparent 60%)'
-        }}
-      />
+  const handleReset = () => {
+    setAppState('idle');
+    setUploadedImage(null);
+    setRawFile(null);
+    setResults(null);
+  };
 
-      <header className="w-full max-w-5xl flex justify-between items-center mb-16 relative z-10">
-        <motion.div 
-          initial={{ opacity: 0, x: -20 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.8, ease: "easeOut" }}
-          className="flex items-center gap-4 group cursor-pointer"
-        >
-          <div className="bg-brand-cyan/10 p-2.5 rounded-xl border border-brand-cyan/20 group-hover:bg-brand-cyan/20 group-hover:border-brand-cyan/40 transition-all duration-300 shadow-[0_0_15px_rgba(6,182,212,0.15)] group-hover:shadow-[0_0_25px_rgba(6,182,212,0.3)] hover:-translate-y-1">
-            <Camera className="w-8 h-8 text-brand-cyan group-hover:scale-110 transition-transform duration-300" />
-          </div>
-          <h1 className="text-3xl font-extrabold tracking-tight text-white drop-shadow-md flex items-center gap-1">
-            Vision<span className="text-brand-cyan text-glow-cyan animate-pulse">SEO</span>
-          </h1>
-        </motion.div>
-        <nav className="flex gap-2 bg-dark-900/50 p-1.5 rounded-2xl border border-white/5 backdrop-blur-md">
-          {['upload', 'history'].map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`relative px-6 py-2.5 rounded-xl font-semibold transition-all duration-300 ${
-                activeTab === tab ? 'text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'
-              }`}
+  const NAV_TABS = [
+    { id: 'upload', label: 'Dashboard', Icon: LayoutDashboard },
+    { id: 'history', label: 'History', Icon: History, badge: history.length || null },
+  ];
+
+  const isIdle = appState === 'idle';
+
+  return (
+    <GlobalDropZone onFile={handleGlobalFile} enabled={appState === 'idle'}>
+      <OnboardingModal />
+      <KeyboardShortcutsModal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+
+      <div className="min-h-screen flex flex-col items-center p-4 md:p-8 lg:p-12 relative overflow-hidden bg-grid">
+
+        {/* Mouse glow */}
+        <motion.div
+          className="fixed top-0 left-0 w-[800px] h-[800px] rounded-full pointer-events-none z-0 mix-blend-screen"
+          animate={{ x: mousePosition.x - 400, y: mousePosition.y - 400 }}
+          transition={{ type: 'tween', ease: 'backOut', duration: 0.8 }}
+          style={{ background: 'radial-gradient(circle, rgba(139,92,246,0.08) 0%, rgba(6,182,212,0.03) 30%, transparent 60%)' }}
+        />
+
+        {/* ── Header ── */}
+        <header className="w-full max-w-5xl flex justify-between items-center mb-10 md:mb-14 relative z-10 gap-4">
+          <motion.div
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.8, ease: 'easeOut' }}
+            className="flex items-center gap-3 group cursor-pointer shrink-0"
+            onClick={() => { setActiveTab('upload'); if (appState === 'results') handleReset(); }}
+          >
+            <div className="bg-brand-cyan/10 p-2 md:p-2.5 rounded-xl border border-brand-cyan/20 group-hover:bg-brand-cyan/20 transition-all duration-300 shadow-[0_0_15px_rgba(6,182,212,0.15)] hover:-translate-y-0.5">
+              <Camera className="w-6 h-6 md:w-7 md:h-7 text-brand-cyan transition-transform duration-300" />
+            </div>
+            <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-white drop-shadow-md">
+              Vision<span className="text-brand-cyan text-glow-cyan">SEO</span>
+            </h1>
+          </motion.div>
+
+          <div className="flex items-center gap-2">
+            {/* Keyboard shortcut hint */}
+            <motion.button
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 1.5 }}
+              id="btn-shortcuts-open"
+              onClick={() => setShortcutsOpen(true)}
+              title="Keyboard shortcuts (?)"
+              className="hidden md:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-dark-900/30 border border-white/5 text-gray-600 hover:text-gray-300 hover:border-white/15 transition-all text-xs font-semibold"
             >
-              {activeTab === tab && (
+              <Keyboard className="w-3.5 h-3.5" />
+              <span>Shortcuts</span>
+              <kbd className="ml-1 text-[10px] bg-dark-700 border border-white/10 px-1.5 py-0.5 rounded font-mono">?</kbd>
+            </motion.button>
+
+            {/* Nav tabs */}
+            <nav className="flex gap-1.5 bg-dark-900/50 p-1.5 rounded-2xl border border-white/5 backdrop-blur-md">
+              {NAV_TABS.map(({ id, label, Icon, badge }) => (
+                <button
+                  key={id}
+                  id={`nav-tab-${id}`}
+                  onClick={() => setActiveTab(id)}
+                  className={`relative flex items-center gap-2 px-4 md:px-5 py-2 md:py-2.5 rounded-xl font-semibold transition-all duration-300 text-sm ${
+                    activeTab === id ? 'text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-white/5'
+                  }`}
+                >
+                  {activeTab === id && (
+                    <motion.div
+                      layoutId="activeTabBadge"
+                      className="absolute inset-0 bg-gradient-to-r from-brand-cyan/80 to-brand-violet/80 rounded-xl -z-10 shadow-[0_0_15px_rgba(139,92,246,0.3)]"
+                      transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+                    />
+                  )}
+                  <Icon className="w-4 h-4 relative z-10" />
+                  <span className="relative z-10 hidden sm:inline">{label}</span>
+                  {badge ? (
+                    <span className="relative z-10 min-w-[18px] h-[18px] flex items-center justify-center bg-brand-violet/80 text-white text-[10px] font-black rounded-full px-1">
+                      {badge}
+                    </span>
+                  ) : null}
+                </button>
+              ))}
+            </nav>
+          </div>
+        </header>
+
+        {/* ── Main ── */}
+        <main className="w-full max-w-5xl flex-1 flex flex-col relative z-10">
+          {activeTab === 'upload' && (
+            <AnimatePresence mode="wait">
+              {isIdle && (
                 <motion.div
-                  layoutId="activeTabBadge"
-                  className="absolute inset-0 bg-gradient-to-r from-brand-cyan/80 to-brand-violet/80 rounded-xl -z-10 shadow-[0_0_15px_rgba(139,92,246,0.3)]"
-                  transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                  key="idle"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  className="flex-1 flex flex-col items-center justify-center"
+                >
+                  <div className="text-center mb-8 relative z-10">
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.5, filter: 'blur(10px)' }}
+                      animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
+                      transition={{ duration: 0.8, type: 'spring' }}
+                      className="inline-block mb-4 px-4 py-1.5 rounded-full border border-brand-violet/30 bg-brand-violet/10 text-brand-violet-light text-sm font-bold tracking-widest uppercase shadow-[0_0_20px_rgba(139,92,246,0.3)] backdrop-blur-sm hover:shadow-[0_0_30px_rgba(139,92,246,0.5)] transition-shadow cursor-default"
+                    >
+                      Vision AI Engine <span className="text-white">v3.0</span>
+                    </motion.div>
+
+                    <h2 className="text-4xl md:text-5xl lg:text-7xl font-extrabold mb-5 text-white tracking-tight leading-tight">
+                      <div className="overflow-hidden inline-block">
+                        <div className="animate-text-reveal" style={{ animationDelay: '0.1s', opacity: 0 }}>Autonomous Visual</div>
+                      </div>
+                      <br />
+                      <div className="overflow-hidden inline-block">
+                        <div className="animate-text-reveal flex items-center gap-3 justify-center flex-wrap" style={{ animationDelay: '0.3s', opacity: 0 }}>
+                          to{' '}
+                          <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand-cyan via-white to-brand-violet drop-shadow-[0_0_30px_rgba(6,182,212,0.8)]">
+                            Blog Engine
+                          </span>
+                        </div>
+                      </div>
+                    </h2>
+
+                    <motion.p
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 1, delay: 0.8 }}
+                      className="text-gray-400 text-base md:text-lg max-w-2xl mx-auto font-light leading-relaxed"
+                    >
+                      Upload, drag, or <kbd className="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-dark-800 border border-white/15 rounded-lg text-brand-cyan font-mono">Ctrl+V</kbd> paste any image or video. Vision AI generates a complete, ready-to-publish content package.
+                    </motion.p>
+
+                    {/* Stats bar — real data from history */}
+                    <StatsBar history={history} />
+                  </div>
+
+                  <UploadZone onUpload={handleUpload} />
+                </motion.div>
+              )}
+
+              {appState === 'scanning' && (
+                <ProgressStepper
+                  key="scanning"
+                  image={uploadedImage}
+                  isVideo={rawFile?.type?.startsWith('video/')}
                 />
               )}
-              <span className="relative z-10 capitalize">{tab === 'upload' ? 'Dashboard' : tab}</span>
-            </button>
-          ))}
-        </nav>
-      </header>
 
-      <main className="w-full max-w-5xl flex-1 flex flex-col">
-        {activeTab === 'upload' && (
-          <AnimatePresence mode="wait">
-            {appState === 'idle' && (
-              <motion.div 
-                key="idle"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                className="flex-1 flex flex-col items-center justify-center"
-              >
-                <div className="text-center mb-12 relative z-10">
-                  <motion.div 
-                    initial={{ opacity: 0, scale: 0.5, filter: "blur(10px)" }}
-                    animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-                    transition={{ duration: 0.8, type: "spring" }}
-                    className="inline-block mb-4 px-4 py-1.5 rounded-full border border-brand-violet/30 bg-brand-violet/10 text-brand-violet-light text-sm font-bold tracking-widest uppercase shadow-[0_0_20px_rgba(139,92,246,0.3)] backdrop-blur-sm hover:shadow-[0_0_30px_rgba(139,92,246,0.5)] transition-shadow cursor-default"
-                  >
-                    Vision AI Engine <span className="text-white">v3.0</span>
-                  </motion.div>
-                  <h2 className="text-5xl md:text-6xl lg:text-7xl font-extrabold mb-6 text-white tracking-tight leading-tight">
-                    <div className="overflow-hidden inline-block"><div className="animate-text-reveal" style={{ animationDelay: '0.1s', opacity: 0 }}>Autonomous Visual</div></div><br/>
-                    <div className="overflow-hidden inline-block"><div className="animate-text-reveal flex items-center gap-3" style={{ animationDelay: '0.3s', opacity: 0 }}>to <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand-cyan via-white to-brand-violet drop-shadow-[0_0_30px_rgba(6,182,212,0.8)]">Blog Engine</span></div></div>
-                  </h2>
-                  <motion.p 
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 1, delay: 0.8 }}
-                    className="text-gray-400 text-lg md:text-xl max-w-2xl mx-auto font-light leading-relaxed text-glow-cyan"
-                  >
-                    Upload any image or video. Our Vision AI extracts semantic context, maps visual objects to high-intent keywords, and generates a ready-to-publish, perfectly formatted WordPress draft.
-                  </motion.p>
-                </div>
-                <UploadZone onUpload={handleUpload} />
-              </motion.div>
-            )}
-
-            {appState === 'scanning' && (
-              <motion.div 
-                key="scanning"
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className="flex-1 flex flex-col items-center justify-center"
-              >
-                <div className="relative w-72 h-72 mb-10 glass rounded-3xl overflow-hidden shadow-[0_0_50px_rgba(6,182,212,0.15)] border-brand-cyan/30 flex items-center justify-center p-2">
-                  <div className="absolute inset-0 bg-brand-cyan/5 blur-xl"></div>
-                  {uploadedImage && (
-                    rawFile?.type?.startsWith('video/') ? 
-                    <video src={uploadedImage} autoPlay loop muted playsInline className="w-full h-full object-cover rounded-2xl opacity-60 mix-blend-luminosity brightness-75 transition-all duration-1000" /> :
-                    <img src={uploadedImage} alt="Uploading" className="w-full h-full object-cover rounded-2xl opacity-60 mix-blend-luminosity brightness-75 transition-all duration-1000" />
-                  )}
-                  
-                  {/* Scanner Grid Overlay */}
-                  <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[size:1rem_1rem] [mask-image:radial-gradient(ellipse_60%_60%_at_50%_50%,#000_70%,transparent_100%)]"></div>
-
-                  {/* Scanning Line */}
-                  <motion.div 
-                    animate={{ top: ['0%', '100%'], opacity: [0, 1, 0] }}
-                    transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut" }}
-                    className="absolute left-0 w-full h-[3px] bg-brand-cyan shadow-[0_0_20px_4px_rgba(6,182,212,0.8)] z-10"
+              {appState === 'results' && (
+                <motion.div
+                  key="results"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="w-full"
+                >
+                  <ResultDashboard
+                    results={results}
+                    image={uploadedImage}
+                    rawFile={rawFile}
+                    onReset={handleReset}
+                    onPublish={handlePublish}
+                    saveToHistory={saveToHistory}
                   />
-                </div>
-                <h3 className="text-3xl font-extrabold text-white mb-3 flex items-center gap-4 text-glow-cyan">
-                  <Search className="animate-spin text-brand-cyan w-8 h-8" /> 
-                  {rawFile?.type?.startsWith('video/') ? "Processing Video Frames & Audio..." : "Analyzing Semantic Context..."}
-                </h3>
-                <p className="text-brand-cyan-light/70 font-medium text-lg tracking-wide">
-                  {rawFile?.type?.startsWith('video/') ? "This may take 15-30 seconds depending on video length. Do not close tab." : "Mapping visual concepts to high-volume SEO keywords"}
-                </p>
-              </motion.div>
-            )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          )}
 
-            {appState === 'results' && (
-              <motion.div 
-                key="results"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="w-full max-w-4xl mx-auto"
+          {activeTab === 'history' && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+              <HistoryTab history={history} setHistory={setHistory} />
+            </motion.div>
+          )}
+        </main>
+
+        {/* ── Floating Action Button (mobile / history tab) ── */}
+        <AnimatePresence>
+          {(activeTab === 'history' || appState === 'results') && (
+            <motion.button
+              initial={{ scale: 0, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0, opacity: 0 }}
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.92 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+              id="btn-fab-new-scan"
+              onClick={() => { setActiveTab('upload'); handleReset(); }}
+              className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-gradient-to-br from-brand-cyan to-brand-violet flex items-center justify-center shadow-[0_0_30px_rgba(6,182,212,0.5)] hover:shadow-[0_0_50px_rgba(139,92,246,0.7)] transition-shadow"
+              title="New scan (Ctrl+R)"
+            >
+              <Plus className="w-6 h-6 text-white" />
+            </motion.button>
+          )}
+        </AnimatePresence>
+
+        {/* ── Bottom keyboard hint (idle state only) ── */}
+        <AnimatePresence>
+          {isIdle && activeTab === 'upload' && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ delay: 2 }}
+              className="mt-6 flex items-center gap-4 text-xs text-gray-600"
+            >
+              <span className="flex items-center gap-1.5">
+                <kbd className="px-1.5 py-0.5 bg-dark-800 border border-white/10 rounded font-mono text-gray-500">Ctrl+V</kbd>
+                paste image
+              </span>
+              <span className="w-px h-3 bg-white/10" />
+              <button
+                onClick={() => setShortcutsOpen(true)}
+                className="flex items-center gap-1.5 hover:text-gray-300 transition-colors"
               >
-                <ResultDashboard 
-                  results={results} 
-                  image={uploadedImage} 
-                  rawFile={rawFile}
-                  onReset={() => { setAppState('idle'); setUploadedImage(null); setRawFile(null); }}
-                  onPublish={handlePublish}
-                  saveToHistory={saveToHistory}
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
-        )}
+                <Keyboard className="w-3 h-3" /> view all shortcuts
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </GlobalDropZone>
+  );
+}
 
-        {activeTab === 'history' && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-            <HistoryTab history={history} />
-          </motion.div>
-        )}
-      </main>
-    </div>
+// ─── Root App ─────────────────────────────────────────────────────────────────
+function App() {
+  return (
+    <ToastProvider>
+      <AppInner />
+    </ToastProvider>
   );
 }
 
