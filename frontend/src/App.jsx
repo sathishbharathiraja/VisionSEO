@@ -10,9 +10,67 @@ import GlobalDropZone from './components/GlobalDropZone';
 import OnboardingModal from './components/OnboardingModal';
 import KeyboardShortcutsModal from './components/KeyboardShortcutsModal';
 import StatsBar from './components/StatsBar';
-import { Camera, History, LayoutDashboard, Plus, Keyboard } from 'lucide-react';
+import {
+  Camera, History, LayoutDashboard, Plus, Keyboard,
+  Zap, TrendingUp, FileText, Share2, Github, ExternalLink,
+  Brain, Search, Sparkles, ShoppingBag,
+} from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+// ─── Feature Pills ─────────────────────────────────────────────────────────────
+const FEATURE_PILLS = [
+  { Icon: Brain,       label: 'Vision AI',        color: 'text-brand-cyan   border-brand-cyan/30   bg-brand-cyan/5   hover:bg-brand-cyan/15' },
+  { Icon: Search,      label: 'SEO Intel',        color: 'text-brand-violet border-brand-violet/30 bg-brand-violet/5 hover:bg-brand-violet/15' },
+  { Icon: FileText,    label: 'Blog Engine',      color: 'text-emerald-400  border-emerald-400/30  bg-emerald-400/5  hover:bg-emerald-400/15' },
+  { Icon: Share2,      label: 'Social Factory',   color: 'text-pink-400     border-pink-400/30     bg-pink-400/5     hover:bg-pink-400/15' },
+  { Icon: ShoppingBag, label: 'Shopify Export',   color: 'text-amber-400    border-amber-400/30    bg-amber-400/5    hover:bg-amber-400/15' },
+  { Icon: Sparkles,    label: 'Schema JSON-LD',   color: 'text-sky-400      border-sky-400/30      bg-sky-400/5      hover:bg-sky-400/15' },
+];
+
+// ─── Footer ────────────────────────────────────────────────────────────────────
+function Footer() {
+  return (
+    <motion.footer
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ delay: 2.5 }}
+      className="w-full max-w-5xl mx-auto mt-16 pb-8 relative z-10"
+    >
+      <div className="border-t border-white/5 pt-8 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-gray-600">
+        <div className="flex items-center gap-2">
+          <Camera className="w-4 h-4 text-brand-cyan/50" />
+          <span className="font-bold text-gray-500">VisionSEO</span>
+          <span className="text-gray-700">·</span>
+          <span>Vision AI Engine v3.0</span>
+          <span className="text-gray-700">·</span>
+          <span>Powered by Gemini 2.5 Flash</span>
+        </div>
+        <div className="flex items-center gap-4">
+          <a
+            href="https://github.com/sathishbharathiraja/VisionSEO"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 hover:text-gray-300 transition-colors"
+          >
+            <Github className="w-3.5 h-3.5" />
+            <span>GitHub</span>
+          </a>
+          <a
+            href="https://visionseo.onrender.com/docs"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 hover:text-gray-300 transition-colors"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            <span>API Docs</span>
+          </a>
+        </div>
+        <p className="text-gray-700">© 2026 VisionSEO · All rights reserved</p>
+      </div>
+    </motion.footer>
+  );
+}
 
 // ─── Inner App (needs ToastProvider in tree) ──────────────────────────────────
 function AppInner() {
@@ -49,20 +107,16 @@ function AppInner() {
   // ── Keyboard shortcuts ────────────────────────────────────────────────────
   useEffect(() => {
     const handler = (e) => {
-      // Escape: back to idle from results, or close modals
       if (e.key === 'Escape') {
         if (shortcutsOpen) { setShortcutsOpen(false); return; }
         if (appState === 'results') { handleReset(); return; }
       }
-      // Alt+1 / Alt+2 — tab switching
       if (e.altKey && e.key === '1') { setActiveTab('upload'); }
       if (e.altKey && e.key === '2') { setActiveTab('history'); }
-      // Ctrl+R — new scan (only when on results)
       if (e.ctrlKey && e.key === 'r' && appState === 'results') {
         e.preventDefault();
         handleReset();
       }
-      // ? or Ctrl+/ — open shortcuts modal
       if ((e.key === '?' && !e.ctrlKey) || (e.ctrlKey && e.key === '/')) {
         e.preventDefault();
         setShortcutsOpen((o) => !o);
@@ -101,7 +155,6 @@ function AppInner() {
         ? 'API quota exceeded. Please wait a moment and try again.'
         : 'Analysis failed. Make sure the backend is running.';
 
-      // Show error toast with Retry action
       toast.error(msg, {
         title: isQuota ? '⚡ Quota Limit' : '❌ Analysis Failed',
         duration: 10000,
@@ -119,14 +172,11 @@ function AppInner() {
     }
   }, [toast]);
 
-  // ── Global drop / paste handler (from GlobalDropZone) ────────────────────
+  // ── Global drop / paste handler ────────────────────────────────────────────
   const handleGlobalFile = useCallback((file) => {
     const savedTone = localStorage.getItem('visionseo_tone') || 'Professional';
     const savedAudience = localStorage.getItem('visionseo_audience') || 'General Public';
-    // Switch to upload tab if needed
     setActiveTab('upload');
-    // Go straight to preview via a synthetic file drop — UploadZone handles this
-    // by triggering onUpload. We dispatch a custom event that UploadZone listens to.
     window.dispatchEvent(new CustomEvent('visionseo:global-file', { detail: { file, tone: savedTone, audience: savedAudience } }));
   }, []);
 
@@ -172,6 +222,35 @@ function AppInner() {
 
       <div className="min-h-screen flex flex-col items-center p-4 md:p-8 lg:p-12 relative overflow-hidden bg-grid">
 
+        {/* ── Aurora background orbs ── */}
+        <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
+          <div
+            className="absolute w-[700px] h-[700px] rounded-full animate-aurora opacity-20"
+            style={{
+              top: '-15%', left: '-10%',
+              background: 'radial-gradient(circle, rgba(6,182,212,0.6) 0%, rgba(6,182,212,0.1) 50%, transparent 70%)',
+              filter: 'blur(80px)',
+            }}
+          />
+          <div
+            className="absolute w-[600px] h-[600px] rounded-full animate-aurora-slow opacity-20"
+            style={{
+              bottom: '-10%', right: '-5%',
+              background: 'radial-gradient(circle, rgba(139,92,246,0.6) 0%, rgba(139,92,246,0.1) 50%, transparent 70%)',
+              filter: 'blur(80px)',
+            }}
+          />
+          <div
+            className="absolute w-[400px] h-[400px] rounded-full animate-aurora opacity-10"
+            style={{
+              top: '40%', right: '20%',
+              background: 'radial-gradient(circle, rgba(236,72,153,0.4) 0%, transparent 70%)',
+              filter: 'blur(60px)',
+              animationDelay: '6s',
+            }}
+          />
+        </div>
+
         {/* Mouse glow */}
         <motion.div
           className="fixed top-0 left-0 w-[800px] h-[800px] rounded-full pointer-events-none z-0 mix-blend-screen"
@@ -181,7 +260,7 @@ function AppInner() {
         />
 
         {/* ── Header ── */}
-        <header className="w-full max-w-5xl flex justify-between items-center mb-10 md:mb-14 relative z-10 gap-4">
+        <header className="w-full max-w-5xl flex justify-between items-center mb-8 md:mb-10 relative z-10 gap-4">
           <motion.div
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
@@ -195,6 +274,10 @@ function AppInner() {
             <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-white drop-shadow-md">
               Vision<span className="text-brand-cyan text-glow-cyan">SEO</span>
             </h1>
+            {/* Version badge */}
+            <span className="hidden sm:inline-flex items-center px-2 py-0.5 rounded-full bg-brand-violet/10 border border-brand-violet/20 text-brand-violet-light text-[9px] font-black uppercase tracking-widest">
+              v3.0
+            </span>
           </motion.div>
 
           <div className="flex items-center gap-2">
@@ -212,6 +295,21 @@ function AppInner() {
               <span>Shortcuts</span>
               <kbd className="ml-1 text-[10px] bg-dark-700 border border-white/10 px-1.5 py-0.5 rounded font-mono">?</kbd>
             </motion.button>
+
+            {/* API status indicator */}
+            <motion.a
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 1.8 }}
+              href="https://visionseo.onrender.com/health"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="API Status"
+              className="hidden md:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-dark-900/30 border border-white/5 text-gray-600 hover:text-gray-300 hover:border-white/15 transition-all text-xs font-semibold"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>API Live</span>
+            </motion.a>
 
             {/* Nav tabs */}
             <nav className="flex gap-1.5 bg-dark-900/50 p-1.5 rounded-2xl border border-white/5 backdrop-blur-md">
@@ -256,16 +354,23 @@ function AppInner() {
                   exit={{ opacity: 0, y: -20 }}
                   className="flex-1 flex flex-col items-center justify-center"
                 >
-                  <div className="text-center mb-8 relative z-10">
+                  {/* ── Hero section ── */}
+                  <div className="text-center mb-10 relative z-10 w-full">
+                    {/* Powered-by badge */}
                     <motion.div
                       initial={{ opacity: 0, scale: 0.5, filter: 'blur(10px)' }}
                       animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
                       transition={{ duration: 0.8, type: 'spring' }}
-                      className="inline-block mb-4 px-4 py-1.5 rounded-full border border-brand-violet/30 bg-brand-violet/10 text-brand-violet-light text-sm font-bold tracking-widest uppercase shadow-[0_0_20px_rgba(139,92,246,0.3)] backdrop-blur-sm hover:shadow-[0_0_30px_rgba(139,92,246,0.5)] transition-shadow cursor-default"
+                      className="inline-flex items-center gap-2 mb-5 px-4 py-1.5 rounded-full border border-brand-violet/30 bg-brand-violet/10 text-brand-violet-light text-sm font-bold tracking-widest uppercase shadow-[0_0_20px_rgba(139,92,246,0.3)] backdrop-blur-sm hover:shadow-[0_0_30px_rgba(139,92,246,0.5)] transition-shadow cursor-default"
                     >
-                      Vision AI Engine <span className="text-white">v3.0</span>
+                      <Zap className="w-3.5 h-3.5 text-brand-violet animate-pulse" />
+                      <span>Vision AI Engine</span>
+                      <span className="text-white">v3.0</span>
+                      <span className="text-brand-violet/50">·</span>
+                      <span className="text-[10px] text-brand-violet/70 normal-case tracking-normal font-medium">Gemini 2.5 Flash</span>
                     </motion.div>
 
+                    {/* Hero headline */}
                     <h2 className="text-4xl md:text-5xl lg:text-7xl font-extrabold mb-5 text-white tracking-tight leading-tight">
                       <div className="overflow-hidden inline-block">
                         <div className="animate-text-reveal" style={{ animationDelay: '0.1s', opacity: 0 }}>Autonomous Visual</div>
@@ -274,21 +379,39 @@ function AppInner() {
                       <div className="overflow-hidden inline-block">
                         <div className="animate-text-reveal flex items-center gap-3 justify-center flex-wrap" style={{ animationDelay: '0.3s', opacity: 0 }}>
                           to{' '}
-                          <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand-cyan via-white to-brand-violet drop-shadow-[0_0_30px_rgba(6,182,212,0.8)]">
+                          <span className="text-transparent bg-clip-text bg-gradient-to-r from-brand-cyan via-white to-brand-violet drop-shadow-[0_0_30px_rgba(6,182,212,0.8)] animate-gradient-x">
                             Blog Engine
                           </span>
                         </div>
                       </div>
                     </h2>
 
+                    {/* Subline */}
                     <motion.p
                       initial={{ opacity: 0, y: 20 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ duration: 1, delay: 0.8 }}
-                      className="text-gray-400 text-base md:text-lg max-w-2xl mx-auto font-light leading-relaxed"
+                      className="text-gray-400 text-base md:text-lg max-w-2xl mx-auto font-light leading-relaxed mb-8"
                     >
-                      Upload, drag, or <kbd className="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-dark-800 border border-white/15 rounded-lg text-brand-cyan font-mono">Ctrl+V</kbd> paste any image or video. Vision AI generates a complete, ready-to-publish content package.
+                      Upload, drag, or{' '}
+                      <kbd className="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-dark-800 border border-white/15 rounded-lg text-brand-cyan font-mono">Ctrl+V</kbd>
+                      {' '}paste any image or video. Vision AI generates a complete, ready-to-publish content package.
                     </motion.p>
+
+                    {/* Feature pills */}
+                    <motion.div
+                      initial={{ opacity: 0, y: 15 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.8, delay: 1.0 }}
+                      className="flex flex-wrap items-center justify-center gap-2 mb-8"
+                    >
+                      {FEATURE_PILLS.map(({ Icon, label, color }) => (
+                        <span key={label} className={`feature-pill ${color}`}>
+                          <Icon className="w-3.5 h-3.5" />
+                          {label}
+                        </span>
+                      ))}
+                    </motion.div>
 
                     {/* Stats bar — real data from history */}
                     <StatsBar history={history} />
@@ -333,7 +456,7 @@ function AppInner() {
           )}
         </main>
 
-        {/* ── Floating Action Button (mobile / history tab) ── */}
+        {/* ── Floating Action Button ── */}
         <AnimatePresence>
           {(activeTab === 'history' || appState === 'results') && (
             <motion.button
@@ -353,7 +476,7 @@ function AppInner() {
           )}
         </AnimatePresence>
 
-        {/* ── Bottom keyboard hint (idle state only) ── */}
+        {/* ── Bottom keyboard hint ── */}
         <AnimatePresence>
           {isIdle && activeTab === 'upload' && (
             <motion.div
@@ -361,7 +484,7 @@ function AppInner() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
               transition={{ delay: 2 }}
-              className="mt-6 flex items-center gap-4 text-xs text-gray-600"
+              className="mt-4 flex items-center gap-4 text-xs text-gray-600 relative z-10"
             >
               <span className="flex items-center gap-1.5">
                 <kbd className="px-1.5 py-0.5 bg-dark-800 border border-white/10 rounded font-mono text-gray-500">Ctrl+V</kbd>
@@ -377,6 +500,9 @@ function AppInner() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* ── Footer ── */}
+        {isIdle && activeTab === 'upload' && <Footer />}
       </div>
     </GlobalDropZone>
   );
