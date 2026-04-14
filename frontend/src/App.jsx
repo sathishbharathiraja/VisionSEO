@@ -13,10 +13,36 @@ import StatsBar from './components/StatsBar';
 import {
   Camera, History, LayoutDashboard, Plus, Keyboard,
   Zap, TrendingUp, FileText, Share2, Github, ExternalLink,
-  Brain, Search, Sparkles, ShoppingBag,
+  Brain, Search, Sparkles, ShoppingBag, Wifi, WifiOff, ServerCrash,
 } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+// ─── Backend Wake-Up Utility ──────────────────────────────────────────────────
+// Render free-tier sleeps after inactivity. This pings /health and retries
+// with exponential backoff until the server is warm (max ~90 seconds).
+async function wakeUpBackend(onProgress) {
+  const MAX_ATTEMPTS = 18;   // 18 × 5s = 90 seconds max wait
+  const POLL_INTERVAL = 5000;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetch(`${API_BASE}/health`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(8000),
+      });
+      if (res.ok) {
+        onProgress?.({ done: true, attempt });
+        return true;
+      }
+    } catch {
+      // Server not ready yet — keep waiting
+    }
+    onProgress?.({ done: false, attempt, total: MAX_ATTEMPTS });
+    await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+  }
+  return false; // Timed out
+}
 
 // ─── Feature Pills ─────────────────────────────────────────────────────────────
 const FEATURE_PILLS = [
@@ -88,6 +114,7 @@ function AppInner() {
   const [rawFile, setRawFile] = useState(null);
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [wakeStatus, setWakeStatus] = useState({ attempt: 0, total: 18 }); // for warm-up UI
 
   // Last failed upload — stored so retry works
   const lastUploadRef = useRef(null);
@@ -128,12 +155,46 @@ function AppInner() {
 
   const saveToHistory = (data) => setHistory((prev) => [data, ...prev]);
 
-  // ── Core upload handler ───────────────────────────────────────────────────
+  // ── Core upload handler (with backend cold-start wake-up) ────────────────
   const handleUpload = useCallback(async (file, tone, audience) => {
     lastUploadRef.current = { file, tone, audience };
-    setAppState('scanning');
     setUploadedImage(URL.createObjectURL(file));
     setRawFile(file);
+
+    // Step 1: Quick health check — detect if server is sleeping
+    let serverReady = false;
+    try {
+      const probe = await fetch(`${API_BASE}/health`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(4000),
+      });
+      serverReady = probe.ok;
+    } catch {
+      serverReady = false;
+    }
+
+    // Step 2: If sleeping, show warm-up screen and wait
+    if (!serverReady) {
+      setAppState('waking_up');
+      toast.warning('Backend is warming up on Render (free tier). This takes ~30–60 seconds on first visit.', {
+        title: '🔄 Backend Waking Up',
+        duration: 8000,
+      });
+      serverReady = await wakeUpBackend((status) => {
+        setWakeStatus({ attempt: status.attempt, total: status.total });
+      });
+      if (!serverReady) {
+        toast.error('Backend did not respond after 90 seconds. Please try again or check Render logs.', {
+          title: '❌ Backend Timeout',
+          duration: 12000,
+        });
+        setAppState('idle');
+        return;
+      }
+    }
+
+    // Step 3: Server is ready — proceed with analysis
+    setAppState('scanning');
 
     const formData = new FormData();
     formData.append('file', file);
@@ -143,6 +204,7 @@ function AppInner() {
     try {
       const response = await axios.post(`${API_BASE}/analyze-image-unified`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 120000, // 2 min timeout for heavy AI processing
       });
       setResults(response.data);
       saveToHistory({ ...response.data, publishedAt: new Date().toISOString() });
@@ -151,9 +213,12 @@ function AppInner() {
     } catch (error) {
       console.error('Error analyzing media:', error);
       const isQuota = error?.response?.status === 429;
+      const isCors = !error?.response && error?.message === 'Network Error';
       const msg = isQuota
         ? 'API quota exceeded. Please wait a moment and try again.'
-        : 'Analysis failed. Make sure the backend is running.';
+        : isCors
+        ? 'Connection blocked (CORS/network). Backend may still be waking up — try again in 30 seconds.'
+        : 'Analysis failed. Please try again.';
 
       toast.error(msg, {
         title: isQuota ? '⚡ Quota Limit' : '❌ Analysis Failed',
@@ -427,6 +492,74 @@ function AppInner() {
                   image={uploadedImage}
                   isVideo={rawFile?.type?.startsWith('video/')}
                 />
+              )}
+
+              {appState === 'waking_up' && (
+                <motion.div
+                  key="waking_up"
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  className="flex-1 flex flex-col items-center justify-center gap-8 py-16"
+                >
+                  {/* Image preview blurred */}
+                  {uploadedImage && (
+                    <div className="relative w-48 h-48 rounded-3xl overflow-hidden border border-amber-500/30 shadow-[0_0_40px_rgba(245,158,11,0.2)] opacity-60">
+                      <img src={uploadedImage} alt="Queued" className="w-full h-full object-cover blur-sm" />
+                      <div className="absolute inset-0 bg-dark-950/60 flex items-center justify-center">
+                        <Wifi className="w-10 h-10 text-amber-400 animate-pulse" />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Status card */}
+                  <div className="glass rounded-3xl border border-amber-500/30 px-10 py-9 flex flex-col items-center gap-5 shadow-[0_0_60px_rgba(245,158,11,0.15)] max-w-md w-full">
+                    {/* Spinner */}
+                    <div className="relative w-16 h-16">
+                      <div className="absolute inset-0 rounded-full border-4 border-amber-500/20" />
+                      <motion.div
+                        className="absolute inset-0 rounded-full border-4 border-transparent border-t-amber-400"
+                        animate={{ rotate: 360 }}
+                        transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <ServerCrash className="w-6 h-6 text-amber-400" />
+                      </div>
+                    </div>
+
+                    <div className="text-center">
+                      <p className="text-white font-extrabold text-xl mb-1">Backend Waking Up</p>
+                      <p className="text-amber-300/80 text-sm leading-relaxed">
+                        Render free-tier spins down after inactivity.<br />
+                        Warming up — usually takes <span className="font-bold text-amber-300">30–60 seconds</span>.
+                      </p>
+                    </div>
+
+                    {/* Progress dots */}
+                    <div className="flex gap-2">
+                      {[...Array(6)].map((_, i) => (
+                        <motion.div
+                          key={i}
+                          className="w-2 h-2 rounded-full bg-amber-400"
+                          animate={{ opacity: [0.2, 1, 0.2], scale: [0.8, 1.2, 0.8] }}
+                          transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.2, ease: 'easeInOut' }}
+                        />
+                      ))}
+                    </div>
+
+                    {/* Attempt counter */}
+                    <div className="flex items-center gap-2 px-4 py-2 bg-amber-500/10 rounded-xl border border-amber-500/20">
+                      <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                      <p className="text-xs text-amber-300 font-mono">
+                        Ping {wakeStatus.attempt} of {wakeStatus.total} · ~{Math.max(0, wakeStatus.total - wakeStatus.attempt) * 5}s remaining
+                      </p>
+                    </div>
+
+                    <p className="text-[10px] text-gray-600 text-center">
+                      Your image is queued and will be analyzed automatically once the backend is ready.
+                    </p>
+                  </div>
+                </motion.div>
               )}
 
               {appState === 'results' && (
