@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   RotateCcw, Download, Camera, Target, Layers, Sparkles, TrendingUp,
@@ -7,6 +7,46 @@ import {
   LayoutGrid, FileText, Share2, Info,
 } from 'lucide-react';
 import HolographicDisplay from './HolographicDisplay';
+
+// ─── HTML Sanitizer (XSS prevention for AI-generated content) ─────────────────
+const ALLOWED_TAGS = new Set([
+  'h1','h2','h3','h4','h5','h6','p','ul','ol','li','strong','em','b','i',
+  'a','code','pre','blockquote','br','hr','span','div','table','thead',
+  'tbody','tr','th','td','figure','figcaption',
+]);
+const ALLOWED_ATTRS = new Set(['href','target','rel','class','id','title','alt','src']);
+
+function sanitizeHtml(html) {
+  if (!html || typeof html !== 'string') return '';
+  // Use a temporary container to parse and reconstruct safe HTML
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  function sanitizeNode(node) {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent;
+    if (node.nodeType !== Node.ELEMENT_NODE) return '';
+    const tag = node.tagName.toLowerCase();
+    if (!ALLOWED_TAGS.has(tag)) {
+      // Keep children but strip the unsafe wrapper tag
+      return Array.from(node.childNodes).map(sanitizeNode).join('');
+    }
+    const attrs = Array.from(node.attributes)
+      .filter((a) => {
+        if (!ALLOWED_ATTRS.has(a.name.toLowerCase())) return false;
+        // Block javascript: URIs
+        if (a.name === 'href' && /^javascript:/i.test(a.value.trim())) return false;
+        if (a.name === 'src' && /^javascript:/i.test(a.value.trim())) return false;
+        return true;
+      })
+      .map((a) => {
+        // Force external links to be safe
+        if (a.name === 'href') return `href="${a.value}" target="_blank" rel="noopener noreferrer"`;
+        return `${a.name}="${a.value}"`;
+      })
+      .join(' ');
+    const children = Array.from(node.childNodes).map(sanitizeNode).join('');
+    return `<${tag}${attrs ? ' ' + attrs : ''}>${children}</${tag}>`;
+  }
+  return Array.from(doc.body.childNodes).map(sanitizeNode).join('');
+}
 import CopyButton from './CopyButton';
 
 // ─── Score Tooltip ────────────────────────────────────────────────────────────
@@ -70,7 +110,8 @@ const ResultDashboard = ({ results, image, rawFile, onReset, onPublish }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [synth] = useState(() => typeof window !== 'undefined' ? window.speechSynthesis : null);
 
-  const score = Math.floor(Math.random() * (99 - 94 + 1)) + 94;
+  // Stable score for the lifetime of this component instance (not random on re-render)
+  const score = useMemo(() => Math.floor(Math.random() * 6) + 94, []);
   const radius = 40;
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (score / 100) * circumference;
@@ -486,7 +527,7 @@ const ResultDashboard = ({ results, image, rawFile, onReset, onPublish }) => {
                         </div>
                         <div
                           className="bg-dark-900/60 p-6 md:p-8 rounded-3xl border border-brand-violet/30 text-gray-200 text-base md:text-lg font-light leading-loose shadow-[0_0_40px_rgba(139,92,246,0.1)] prose prose-invert max-w-full overflow-y-auto max-h-[500px] custom-scrollbar"
-                          dangerouslySetInnerHTML={{ __html: blogData.blog_content }}
+                          dangerouslySetInnerHTML={{ __html: sanitizeHtml(blogData.blog_content) }}
                         />
                       </div>
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { UploadCloud, ClipboardPaste } from 'lucide-react';
 
@@ -16,6 +16,18 @@ const GlobalDropZone = ({ children, onFile, enabled }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isPasting, setIsPasting] = useState(false);
   const dragCounter = React.useRef(0);
+
+  // Pre-compute particle positions once (stable across renders)
+  const particles = useMemo(() =>
+    [...Array(6)].map(() => ({
+      x: (Math.random() - 0.5) * 200,
+      y: (Math.random() - 0.5) * 200,
+      duration: 1.5 + Math.random(),
+      delay: Math.random() * 0.8,
+      left: `${20 + Math.random() * 60}%`,
+      top: `${20 + Math.random() * 60}%`,
+    })),
+  []);
 
   // ── Global drag listeners ──────────────────────────────────────────────────
   useEffect(() => {
@@ -129,24 +141,24 @@ const GlobalDropZone = ({ children, onFile, enabled }) => {
             <div className="absolute inset-8 rounded-[2.5rem] border-2 border-dashed border-brand-violet/40" />
 
             {/* Floating particles */}
-            {[...Array(6)].map((_, i) => (
+            {particles.map((p, i) => (
               <motion.div
                 key={i}
                 className="absolute w-2 h-2 rounded-full bg-brand-cyan/60"
                 animate={{
-                  x: [0, (Math.random() - 0.5) * 200],
-                  y: [0, (Math.random() - 0.5) * 200],
+                  x: [0, p.x],
+                  y: [0, p.y],
                   opacity: [0, 1, 0],
                   scale: [0, 1.5, 0],
                 }}
                 transition={{
-                  duration: 1.5 + Math.random(),
+                  duration: p.duration,
                   repeat: Infinity,
-                  delay: Math.random() * 0.8,
+                  delay: p.delay,
                 }}
                 style={{
-                  left: `${20 + Math.random() * 60}%`,
-                  top: `${20 + Math.random() * 60}%`,
+                  left: p.left,
+                  top: p.top,
                 }}
               />
             ))}

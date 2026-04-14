@@ -1,7 +1,24 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Sparkles, Expand, Shrink, Zap, GraduationCap } from 'lucide-react';
+
+// Escape special HTML characters to prevent XSS from AI-generated content
+function escapeHtml(str) {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// Safe literal string replacement (not regex-based — avoids metacharacter issues)
+function replaceLiteral(content, target, replacement) {
+  const idx = content.indexOf(target);
+  if (idx === -1) return content;
+  return content.slice(0, idx) + replacement + content.slice(idx + target.length);
+}
 
 const OmniscientEditor = ({ content, onUpdate, tone, audience }) => {
   const [selectedText, setSelectedText] = useState("");
@@ -10,10 +27,9 @@ const OmniscientEditor = ({ content, onUpdate, tone, audience }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const contentRef = useRef(null);
 
-  // Function to handle text selection
-  const handleSelection = () => {
+  const handleSelection = useCallback(() => {
     const selection = window.getSelection();
-    if (!selection || selection.isCollapsed || !contentRef.current.contains(selection.anchorNode)) {
+    if (!selection || selection.isCollapsed || !contentRef.current?.contains(selection.anchorNode)) {
       if (!isProcessing) setIsMenuOpen(false);
       return;
     }
@@ -21,25 +37,24 @@ const OmniscientEditor = ({ content, onUpdate, tone, audience }) => {
     const text = selection.toString().trim();
     if (text.length < 5) {
       if (!isProcessing) setIsMenuOpen(false);
-      return; // Ignore very short selections
+      return;
     }
 
     const range = selection.getRangeAt(0);
     const rect = range.getBoundingClientRect();
 
     setSelectedText(text);
-    // Position menu slightly above the selection
     setMenuPos({
       x: rect.left + rect.width / 2,
       y: rect.top - 10
     });
     setIsMenuOpen(true);
-  };
+  }, [isProcessing]);
 
   useEffect(() => {
     document.addEventListener('mouseup', handleSelection);
     return () => document.removeEventListener('mouseup', handleSelection);
-  }, []);
+  }, [handleSelection]);
 
   const handleRewrite = async (action) => {
     if (!selectedText) return;
@@ -55,14 +70,17 @@ const OmniscientEditor = ({ content, onUpdate, tone, audience }) => {
 
       if (response.data.status === "success") {
         const newText = response.data.rewritten_text;
-        
-        // This is a naive replace. In a real highly-robust editor we'd use robust DOM manipulation, 
-        // but simple string replacement works for the prototype.
-        const updatedContent = content.replace(selectedText, `<span class="bg-brand-violet/20 text-white transition-all duration-1000 px-1 rounded">${newText}</span>`);
-        
+        // Escape the AI output to prevent XSS, then inject it as safe HTML
+        const safeText = escapeHtml(newText);
+        // Use literal replacement (not regex) to avoid metacharacter issues
+        const updatedContent = replaceLiteral(
+          content,
+          selectedText,
+          `<span class="bg-brand-violet/20 text-white transition-all duration-1000 px-1 rounded">${safeText}</span>`
+        );
         onUpdate(updatedContent);
         setIsMenuOpen(false);
-        window.getSelection().removeAllRanges();
+        window.getSelection()?.removeAllRanges();
       }
     } catch (error) {
       console.error("Rewrite failed", error);

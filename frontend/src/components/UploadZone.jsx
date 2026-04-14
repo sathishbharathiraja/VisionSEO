@@ -97,6 +97,7 @@ const UploadZone = ({ onUpload }) => {
 
 
   const setPreviewLocal = (file) => {
+    // Revoke the previous object URL immediately to prevent memory leaks
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     const url = URL.createObjectURL(file);
     setPreviewFile(file);
