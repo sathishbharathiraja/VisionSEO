@@ -9,10 +9,11 @@ import requests
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 from tenacity import retry, wait_exponential, stop_after_attempt
+from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-PRIMARY_MODEL = 'models/gemini-2.5-pro'
-FALLBACK_MODEL = 'models/gemini-2.5-flash'
+PRIMARY_MODEL = 'models/gemini-2.5-flash'
+FALLBACK_MODEL = 'models/gemini-2.0-flash'
 
 # ── Configure Gemini once at module load (not per-request) ───────────────────
 _API_KEY = os.getenv("GEMINI_API_KEY")
@@ -322,7 +323,13 @@ async def generate_vision_aeo_unified(file_path: str, tone: str = "Professional"
         return final_dict
 
     except Exception as e:
-        print(f"Unified Pipeline Exception: {type(e).__name__}: {e}")
+        err_str = str(e)
+        print(f"Unified Pipeline Exception: {type(e).__name__}: {err_str}")
+        if "ResourceExhausted" in type(e).__name__ or "429" in err_str or "quota" in err_str.lower() or "RetryError" in type(e).__name__:
+            raise HTTPException(
+                status_code=429,
+                detail="API quota exceeded. The AI service is temporarily rate-limited. Please wait 60 seconds and try again."
+            )
         raise e
     finally:
         cleanup_media(media_part)
